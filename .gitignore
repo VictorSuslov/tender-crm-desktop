@@ -1,0 +1,49 @@
+# ============ Qt Creator / CMake ============
+build/
+build-*/
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+compile_commands.json
+
+# ============ Compiled files ============
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.la
+*.lo
+
+# ============ Qt generated ============
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*_resource.rc
+
+# ============ IDE ============
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ============ OS ============
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============ Debug ============
+*.pdb
+*.ilk
+*.exp
+
+# ============ Temporary ============
+*.tmp
+*.bak
