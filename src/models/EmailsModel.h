@@ -25,7 +25,7 @@ public:
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
     
-    void load(int page = 1, const QString& category = QString(), const QString& search = QString());
+    void load(int page = 1, const QString& category = QString(), const QString& search = QString(), int perPage = 50);
     void refresh();
     
     const dto::Email& emailAt(int row) const;
@@ -33,6 +33,7 @@ public:
     
     int totalCount() const { return m_total; }
     int currentPage() const { return m_page; }
+	void setEmails(const QList<dto::Email>& emails);
 
 signals:
     void loadingStarted();

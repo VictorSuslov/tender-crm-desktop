@@ -29,10 +29,7 @@ QVariant TendersModel::data(const QModelIndex& index, int role) const {
             case ColNoticeNumber: return t.notice_number;
             case ColPurchaseName: return t.purchase_name;
             case ColCustomer: return t.customer_name;
-            case ColNmck:
-                if (t.nmck > 0)
-                    return QString("%1 %2").arg(t.nmck, 0, 'f', 2).arg(t.currency);
-                return {};
+            case ColNmck: return t.nmck;  // Просто возвращаем число
             case ColDeadline:
                 if (t.application_deadline.isValid())
                     return t.application_deadline.toString("dd.MM.yyyy HH:mm");

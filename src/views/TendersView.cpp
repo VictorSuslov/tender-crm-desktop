@@ -1,10 +1,13 @@
 #include "TendersView.h"
 #include "dialogs/TenderEditDialog.h"
+#include "delegates/MoneyDelegate.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QCoreApplication>
+#include <QDebug>
 
 TendersView::TendersView(ApiClient* api, QWidget* parent)
     : QWidget(parent)
@@ -85,6 +88,11 @@ void TendersView::setupUi() {
     bottomBar->addWidget(m_lblTotal);
     bottomBar->addStretch();
     mainLayout->addLayout(bottomBar);
+
+    m_table->setItemDelegateForColumn(
+        TendersModel::ColNmck,
+        new MoneyDelegate(this)
+        );
 }
 
 void TendersView::setupConnections() {
@@ -117,24 +125,108 @@ void TendersView::refresh() {
 }
 
 void TendersView::onAddTender() {
+    qDebug().noquote() << "\n🆕 === onAddTender START ===";
+    
     TenderEditDialog dialog(m_api, this);
-    if (dialog.exec() == QDialog::Accepted) {
-        refresh();
+    int result = dialog.exec();
+    
+    qDebug().noquote() << "📋 dialog.exec() вернулся с кодом:" << result;
+    QCoreApplication::processEvents(); // Гарантируем вывод в консоль
+    
+    if (result != QDialog::Accepted) {
+        qDebug().noquote() << "❌ Диалог отменён";
+        return;
     }
+    
+    int tenderId = dialog.getCreatedTenderId();
+    QStringList files = dialog.getAttachedFiles();
+    
+    qDebug().noquote() << "✅ ID тендера:" << tenderId;
+    qDebug().noquote() << "📎 Файлов:" << files.size();
+    
+    if (tenderId <= 0) {
+        qDebug().noquote() << "⚠️ tenderId <= 0. Прерываем.";
+        QMessageBox::warning(this, "Ошибка", "Тендер не был создан.");
+        return;
+    }
+    
+    if (files.isEmpty()) {
+        qDebug().noquote() << "ℹ️ Файлов нет. Обновляем список.";
+        refresh();
+        return;
+    }
+    
+    qDebug().noquote() << "🚀 Вызываем uploadDocuments...";
+    m_api->uploadDocuments(
+        tenderId,
+        files,
+        [this, tenderId](const QJsonObject& res) {
+            int count = res["uploaded_count"].toInt();
+            qDebug().noquote() << "✅ Загружено документов:" << count;
+            QMessageBox::information(this, "Успех", 
+                QString("Тендер создан.\nДокументов проиндексировано: %1").arg(count));
+            refresh();
+        },
+        [this](const QString& err) {
+            qDebug().noquote() << "❌ Ошибка загрузки:" << err;
+            QMessageBox::warning(this, "Предупреждение", 
+                "Тендер создан, но файлы не загружены:\n" + err);
+            refresh();
+        }
+    );
+    
+    qDebug().noquote() << "🏁 === onAddTender END ===";
 }
 
 void TendersView::onEditTender() {
     auto index = m_table->currentIndex();
     if (!index.isValid()) {
-        QMessageBox::information(this, "Информация", "Выберите тендер");
+        qDebug().noquote() << "⚠️ Нет выбранной строки";
         return;
     }
     
-    int id = m_model->tenderIdAt(index.row());
+    int id = m_model->tenderAt(index.row()).id;
+    qDebug().noquote() << "\n✏️ === onEditTender START, ID:" << id << "===";
+    
     TenderEditDialog dialog(m_api, this, id);
-    if (dialog.exec() == QDialog::Accepted) {
-        refresh();
+    int result = dialog.exec();
+    
+    qDebug().noquote() << "📋 dialog.exec() вернулся с кодом:" << result;
+    
+    if (result != QDialog::Accepted) {
+        qDebug().noquote() << "❌ Диалог отменён";
+        return;
     }
+    
+    QStringList files = dialog.getAttachedFiles();
+    qDebug().noquote() << "📎 Файлов для загрузки:" << files.size();
+    
+    if (files.isEmpty()) {
+        qDebug().noquote() << "ℹ️ Файлов нет, просто обновляем список";
+        refresh();
+        return;
+    }
+    
+    qDebug().noquote() << "🚀 Вызываем uploadDocuments для тендера ID:" << id;
+    m_api->uploadDocuments(
+        id,
+        files,
+        [this, id](const QJsonObject& res) {
+            int count = res["uploaded_count"].toInt();
+            qDebug().noquote() << "✅ Загружено документов:" << count;
+            QMessageBox::information(this, "Успех", 
+                QString("Тендер обновлён.\nДокументов проиндексировано: %1").arg(count));
+            refresh();
+        },
+        [this](const QString& err) {
+            qDebug().noquote() << "❌ Ошибка загрузки:" << err;
+            QMessageBox::warning(this, "Предупреждение", 
+                "Тендер обновлён, но файлы не загружены:\n" + err);
+            refresh();
+        }
+    );
+    
+    qDebug().noquote() << "🏁 === onEditTender END ===";
 }
 
 void TendersView::onDeleteTender() {

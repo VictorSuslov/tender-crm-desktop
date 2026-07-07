@@ -48,13 +48,21 @@ public:
         const std::function<void(const dto::Tender&)>& onSuccess,
         const std::function<void(const QString&)>& onError
     );
+	
+	// Загрузка файлов для тендера
+	void uploadDocuments(
+		int tenderId,
+		const QStringList& filePaths,
+		const std::function<void(const QJsonObject&)>& onSuccess,
+		const std::function<void(const QString&)>& onError
+	);
     
     // Emails
     void getEmails(
         const std::function<void(const dto::EmailsList&)>& onSuccess,
         const std::function<void(const QString&)>& onError,
         int page = 1,
-        int perPage = 20,
+        int perPage = 50,
         const QString& category = QString(),
         const QString& search = QString()
     );
@@ -65,12 +73,26 @@ public:
         const std::function<void()>& onSuccess,
         const std::function<void(const QString&)>& onError
     );
+	
+	// Обработка писем с настройками
+	void processEmails(
+		int limit,
+		const QString& sinceDate,  // пустая строка = не использовать
+		const std::function<void()>& onSuccess,
+		const std::function<void(const QString&)>& onError
+	);
     
     // Worker
     void triggerEmailProcessing(
         const std::function<void()>& onSuccess,
         const std::function<void(const QString&)>& onError
     );
+	
+	// Проверка IMAP-подключения
+	void checkImapConnection(
+		const std::function<void(const QJsonObject&)>& onSuccess,
+		const std::function<void(const QString&)>& onError
+	);
 	
 	// RAG: документы
 	void getDocuments(

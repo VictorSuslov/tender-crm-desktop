@@ -22,6 +22,7 @@ set(SOURCES
     src/dialogs/LinkEmailDialog.cpp
     src/dialogs/EmailDetailDialog.cpp
 	src/views/RagView.cpp
+	src/widgets/EmailTextBrowser.cpp
 )
 
 set(HEADERS
@@ -37,6 +38,7 @@ set(HEADERS
     src/dialogs/LinkEmailDialog.h
     src/dialogs/EmailDetailDialog.h
 	src/views/RagView.h
+	src/widgets/EmailTextBrowser.h
 )
 
 add_executable(TenderCrmDesktop ${SOURCES} ${HEADERS})

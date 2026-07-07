@@ -4,6 +4,11 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QUrlQuery>
+#include <QHttpPart>
+#include <QHttpMultiPart>
+#include <QFile>
+#include <QFileInfo>
+#include <QDebug>
 
 ApiClient::ApiClient(QObject* parent)
     : QObject(parent)
@@ -169,12 +174,95 @@ void ApiClient::updateTenderStatus(
     );
 }
 
+void ApiClient::uploadDocuments(
+    int tenderId,
+    const QStringList& filePaths,
+    const std::function<void(const QJsonObject&)>& onSuccess,
+    const std::function<void(const QString&)>& onError
+) {
+    qDebug().noquote() << "\n📤 === uploadDocuments START ===";
+    qDebug().noquote() << "  Tender ID:" << tenderId;
+    qDebug().noquote() << "  Files:" << filePaths;
+    
+    QUrl url = m_baseUrl;
+    url.setPath(QString("/api/documents/upload/%1").arg(tenderId));
+    qDebug().noquote() << "  URL:" << url.toString();
+    
+    QHttpMultiPart* multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+    bool hasValidFiles = false;
+    
+    for (const QString& path : filePaths) {
+        QFile* file = new QFile(path);
+        if (!file->open(QIODevice::ReadOnly)) {
+            qDebug().noquote() << "  ⚠️ Не удалось открыть:" << path;
+            delete file;
+            continue;
+        }
+        
+        qDebug().noquote() << "  📄 Добавлен:" << QFileInfo(path).fileName() 
+                           << "(" << file->size() << " bytes)";
+        
+        QHttpPart part;
+        QString fileName = QFileInfo(path).fileName();
+        part.setHeader(QNetworkRequest::ContentDispositionHeader, 
+                      QString("form-data; name=\"files\"; filename=\"%1\"").arg(fileName));
+        part.setBodyDevice(file);
+        file->setParent(multiPart);
+        multiPart->append(part);
+        hasValidFiles = true;
+    }
+    
+    if (!hasValidFiles) {
+        onError("Не удалось прочитать файлы");
+        return;
+    }
+    
+    QNetworkRequest request(url);
+    request.setTransferTimeout(300000); // 5 минут
+    
+    QNetworkReply* reply = m_nam->post(request, multiPart);
+    multiPart->setParent(reply);
+    
+    qDebug().noquote() << "  🚀 Отправка запроса...";
+    
+    connect(reply, &QNetworkReply::finished, this, [reply, onSuccess, onError, this]() {
+        reply->deleteLater();
+        
+        if (reply->error() != QNetworkReply::NoError) {
+            QString err = reply->errorString();
+            QByteArray body = reply->readAll();
+            if (!body.isEmpty()) {
+                QJsonDocument doc = QJsonDocument::fromJson(body);
+                if (doc.isObject() && doc.object().contains("detail")) {
+                    err = doc.object()["detail"].toString();
+                }
+            }
+            qDebug().noquote() << "  ❌ Ошибка сети:" << err;
+            onError(err);
+            return;
+        }
+        
+        QByteArray data = reply->readAll();
+        QJsonDocument doc = QJsonDocument::fromJson(data);
+        if (!doc.isObject()) {
+            qDebug().noquote() << "  ❌ Невалидный JSON ответ";
+            onError("Invalid server response");
+            return;
+        }
+        
+        qDebug().noquote() << "  ✅ Успех:" << doc.object();
+        onSuccess(doc.object());
+    });
+}
+
 // ============ Emails ============
 void ApiClient::getEmails(
     const std::function<void(const dto::EmailsList&)>& onSuccess,
     const std::function<void(const QString&)>& onError,
-    int page, int perPage,
-    const QString& category, const QString& search
+    int page,
+    int perPage,
+    const QString& category,
+    const QString& search
 ) {
     QUrl url = m_baseUrl;
     url.setPath("/api/emails/");
@@ -182,8 +270,14 @@ void ApiClient::getEmails(
     QUrlQuery query;
     query.addQueryItem("page", QString::number(page));
     query.addQueryItem("per_page", QString::number(perPage));
-    if (!category.isEmpty()) query.addQueryItem("category", category);
-    if (!search.isEmpty()) query.addQueryItem("search", search);
+    
+    if (!category.isEmpty()) {
+        query.addQueryItem("category", category);
+    }
+    if (!search.isEmpty()) {
+        query.addQueryItem("search", search);
+    }
+    
     url.setQuery(query);
     
     QNetworkRequest request(url);
@@ -191,7 +285,56 @@ void ApiClient::getEmails(
     
     handleJsonResponse(reply,
         [onSuccess](const QJsonObject& obj) {
-            onSuccess(dto::EmailsList::fromJson(obj));
+            dto::EmailsList list;
+            list.total = obj["total"].toInt();
+            list.page = obj["page"].toInt();
+            list.per_page = obj["per_page"].toInt();
+            
+            QJsonArray arr = obj["items"].toArray();
+            for (const auto& val : arr) {
+                dto::Email email;
+                QJsonObject emailObj = val.toObject();  // ⭐ Переименовали из obj в emailObj
+                
+                email.id = emailObj["id"].toInt();
+                email.uid = emailObj["uid"].toString();
+                email.from_email = emailObj["from_email"].toString();
+                email.from_name = emailObj["from_name"].toString();
+                email.subject = emailObj["subject"].toString();
+                email.category = emailObj["category"].toString();
+                email.summary = emailObj["summary"].toString();
+                
+                email.body_text = emailObj["body_text"].toString();
+                email.body_html = emailObj["body_html"].toString();
+                
+                if (emailObj.contains("tender_details") && !emailObj["tender_details"].isNull()) {
+                    email.tender_details = emailObj["tender_details"].toObject();
+                }
+                
+                if (emailObj.contains("attachments_info") && !emailObj["attachments_info"].isNull()) {
+                    email.attachments_info = emailObj["attachments_info"].toArray();
+                }
+                
+                QString dateStr = emailObj["email_date"].toString();
+                if (!dateStr.isEmpty()) {
+                    email.email_date = QDateTime::fromString(dateStr, Qt::ISODate);
+                }
+                
+                // ⭐ НОВОЕ: парсим привязки к тендерам
+                if (emailObj.contains("linked_tenders") && emailObj["linked_tenders"].isArray()) {
+                    QJsonArray linksArray = emailObj["linked_tenders"].toArray();
+                    for (const QJsonValue& linkVal : linksArray) {
+                        QJsonObject linkObj = linkVal.toObject();
+                        dto::EmailTenderLinkInfo link;
+                        link.tender_id = linkObj["tender_id"].toInt();
+                        link.link_type = linkObj["link_type"].toString();
+                        link.tender_name = linkObj["tender_name"].toString();
+                        email.linked_tenders.append(link);
+                    }
+                }
+                
+                list.items.append(email);
+            }
+            onSuccess(list);
         },
         onError
     );
@@ -211,6 +354,40 @@ void ApiClient::linkEmailToTender(
     
     handleJsonResponse(reply,
         [onSuccess](const QJsonObject&) { onSuccess(); },
+        onError
+    );
+}
+
+void ApiClient::processEmails(
+    int limit,
+    const QString& sinceDate,
+    const std::function<void()>& onSuccess,
+    const std::function<void(const QString&)>& onError
+) {
+    QUrl url = m_baseUrl;
+    url.setPath("/api/worker/process");
+    
+    // Добавляем query параметры
+    QUrlQuery query;
+    query.addQueryItem("limit", QString::number(limit));
+    
+    if (!sinceDate.isEmpty()) {
+        query.addQueryItem("since_date", sinceDate);
+    }
+    
+    url.setQuery(query);
+    
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setTransferTimeout(300000);  // 5 минут
+    
+    QNetworkReply* reply = m_nam->post(request, QByteArray());
+    
+    handleJsonResponse(reply,
+        [onSuccess](const QJsonObject& obj) {
+            Q_UNUSED(obj);
+            onSuccess();
+        },
         onError
     );
 }
@@ -240,6 +417,21 @@ void ApiClient::triggerEmailProcessing(
         },
         onError
     );
+}
+
+void ApiClient::checkImapConnection(
+    const std::function<void(const QJsonObject&)>& onSuccess,
+    const std::function<void(const QString&)>& onError
+) {
+    QUrl url = m_baseUrl;
+    url.setPath("/api/worker/check-imap");
+    
+    QNetworkRequest request(url);
+    request.setTransferTimeout(30000);  // 30 секунд
+    
+    QNetworkReply* reply = m_nam->get(request);
+    
+    handleJsonResponse(reply, onSuccess, onError);
 }
 
 // ============ RAG: Documents ============

@@ -2,10 +2,14 @@
 #include <QWidget>
 #include <QLineEdit>
 #include <QSpinBox>
+#include <QVBoxLayout>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QComboBox>
 #include <QLabel>
 #include <QGroupBox>
 #include <QTimer>
+#include <QDateEdit>
 #include <QCheckBox>
 #include "api/ApiClient.h"
 
@@ -16,10 +20,13 @@ public:
     void refresh();
 
 private slots:
+    void onCheckImap();
     void onTestConnection();
     void onProcessNow();
     void onAutoRefreshToggled(bool checked);
     void onRefreshStatistics();
+	void onProcessModeChanged();
+	
 
 private:
     void setupUi();
@@ -39,6 +46,13 @@ private:
     QPushButton* m_btnProcessNow;
     QCheckBox* m_chkAutoRefresh;
     QLabel* m_lblProcessStatus;
+	
+	// Режим обработки
+    QRadioButton* m_radioLastN;
+    QRadioButton* m_radioSinceDate;
+    QSpinBox* m_spinLimit;
+    QComboBox* m_comboPeriod;
+    QDateEdit* m_dateEdit;
 
     // Статистика
     QLabel* m_lblTotalEmails;
@@ -52,4 +66,12 @@ private:
 
     // Таймер автообновления
     QTimer* m_refreshTimer;
+	
+	// Проверка IMAP
+    QGroupBox* m_imapStatusGroup;
+    QLabel* m_lblImapStatus;
+    QLabel* m_lblImapDetails;
+    QPushButton* m_btnCheckImap;
+    QWidget* m_imapStepsWidget;
+    QVBoxLayout* m_imapStepsLayout;
 };

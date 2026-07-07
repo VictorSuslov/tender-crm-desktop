@@ -1,4 +1,5 @@
 #include "dialogs/LinkEmailDialog.h"
+#include "dialogs/EmailDetailDialog.h"
 #include "EmailsView.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -7,10 +8,231 @@
 #include <QGroupBox>
 #include <QFormLayout>
 #include <QScrollArea>
+#include <QRegularExpression>
+
+// ============ Вспомогательные функции для отображения писем ============
+
+/**
+ * Конвертирует Markdown/plain text в HTML для красивого отображения.
+ */
+static QString convertMarkdownToHtml(const QString& text) {
+    QString html = text;
+    
+    // Экранируем HTML-символы
+    html.replace("&", "&amp;");
+    html.replace("<", "&lt;");
+    html.replace(">", "&gt;");
+    
+    // Жирный текст: **текст** -> <b>текст</b>
+    html.replace(QRegularExpression("\\*\\*([^*]+)\\*\\*"), "<b>\\1</b>");
+    
+    // Курсив: *текст* -> <i>текст</i>
+    html.replace(QRegularExpression("(?<!\\*)\\*([^*]+)\\*(?!\\*)"), "<i>\\1</i>");
+    
+    // Ссылки: [текст](url) -> <a href="url">текст</a>
+    html.replace(QRegularExpression("\\[([^\\]]+)\\]\\(([^)]+)\\)"), 
+                 "<a href=\"\\2\" style=\"color: #0066cc; text-decoration: underline;\">\\1</a>");
+    
+    // Горизонтальные линии: --- -> <hr>
+    html.replace(QRegularExpression("^---+$", QRegularExpression::MultilineOption), "<hr>");
+    
+    // Заголовки
+    html.replace(QRegularExpression("^### (.+)$", QRegularExpression::MultilineOption), "<h3>\\1</h3>");
+    html.replace(QRegularExpression("^## (.+)$", QRegularExpression::MultilineOption), "<h2>\\1</h2>");
+    html.replace(QRegularExpression("^# (.+)$", QRegularExpression::MultilineOption), "<h1>\\1</h1>");
+    
+    // Списки
+    html.replace(QRegularExpression("^- (.+)$", QRegularExpression::MultilineOption), "<li>\\1</li>");
+    
+    // Переносы строк
+    html.replace("\n", "<br>");
+    
+    // Удаляем множественные пустые строки
+    html.replace(QRegularExpression("(<br\\s*/?>\\s*){3,}"), "<br><br>");
+    
+    // Оборачиваем в div с базовыми стилями
+    html = QString("<div style='font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5;'>%1</div>").arg(html);
+    
+    return html;
+}
+
+/**
+ * Очищает HTML от трекеров, скрытых элементов и невидимых символов.
+ * Также исправляет некорректные CSS-свойства, вызывающие предупреждения Qt.
+ */
+static QString cleanEmailHtml(const QString& html) {
+    QString cleaned = html;
+    
+    // =========================================================================
+    // 1. Удаление трекеров и скрытых элементов
+    // =========================================================================
+    
+    // Удаляем tracking pixels (изображения 1px и меньше)
+    cleaned.remove(QRegularExpression(
+        "<img[^>]*\\s+(?:width|height)\\s*=\\s*[\"']?[01][\"']?[^>]*>",
+        QRegularExpression::CaseInsensitiveOption));
+    
+    // Удаляем скрытые preheader
+    cleaned.remove(QRegularExpression(
+        "<span[^>]*class\\s*=\\s*[\"'][^\"']*preheader[^\"']*[\"'][^>]*>.*?</span>",
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption));
+    
+    // Удаляем элементы с display:none (инлайновый стиль)
+    cleaned.remove(QRegularExpression(
+        "<[a-z]+[^>]*style\\s*=\\s*[\"'][^\"']*display\\s*:\\s*none[^\"']*[\"'][^>]*>.*?</[a-z]+>",
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption));
+    
+    // Удаляем элементы с mso-hide (скрытие для Outlook)
+    cleaned.remove(QRegularExpression(
+        "<[a-z]+[^>]*style\\s*=\\s*[\"'][^\"']*mso-hide\\s*:\\s*all[^\"']*[\"'][^>]*>.*?</[a-z]+>",
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption));
+    
+    // =========================================================================
+    // 2. Очистка невидимых Unicode-символов
+    // =========================================================================
+    
+    cleaned.replace(QRegularExpression("[\\x{200B}\\x{200C}\\x{200D}\\x{2060}\\x{FEFF}]"), " ");
+    cleaned.replace(QRegularExpression("\\x{00A0}"), " ");
+    cleaned.replace(QRegularExpression("\\x{2028}"), " ");
+    cleaned.replace(QRegularExpression("\\x{2029}"), " ");
+    cleaned.replace(QRegularExpression("\\x{3000}"), " ");
+    cleaned.replace(QRegularExpression("[\\x{2800}-\\x{28FF}]+"), " ");
+    
+    // =========================================================================
+    // 3. Исправление некорректных CSS-свойств
+    // =========================================================================
+    
+    // font-size: 0 → font-size: 12px
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*0(\\.0+)?\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "font-size: 12px;");
+    
+    // font-size: -Npx (отрицательные)
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*-[0-9.]+\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "font-size: 12px;");
+    
+    // font-size: 1px (часто для трекеров)
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*1\\s*px\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "font-size: 12px;");
+    
+    // height: 0 (просто, без lookbehind — даже для <hr> замена безопасна)
+    cleaned.replace(QRegularExpression(
+        "height\\s*:\\s*0(\\.0+)?\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "");
+    
+    // height: -N (отрицательные)
+    cleaned.replace(QRegularExpression(
+        "height\\s*:\\s*-[0-9.]+\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "");
+    
+    // width: 0
+    cleaned.replace(QRegularExpression(
+        "width\\s*:\\s*0(\\.0+)?\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "");
+    
+    // line-height: 0 → line-height: 1.4
+    cleaned.replace(QRegularExpression(
+        "line-height\\s*:\\s*0(\\.0+)?\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "line-height: 1.4;");
+    
+    // line-height: -N (отрицательные)
+    cleaned.replace(QRegularExpression(
+        "line-height\\s*:\\s*-[0-9.]+\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "line-height: 1.4;");
+    
+    // max-height: 0 → убрать полностью
+    cleaned.replace(QRegularExpression(
+        "max-height\\s*:\\s*0(\\.0+)?\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "");
+    
+    // max-width: 0 → убрать полностью
+    cleaned.replace(QRegularExpression(
+        "max-width\\s*:\\s*0(\\.0+)?\\s*(px|pt|em|rem|%|cm|mm|in|pc|ex|ch)?\\s*;?",
+        QRegularExpression::CaseInsensitiveOption),
+        "");
+    
+    // =========================================================================
+    // 4. Замена относительных размеров на абсолютные
+    // =========================================================================
+    
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*xx-small\\b", QRegularExpression::CaseInsensitiveOption),
+        "font-size: 9px");
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*x-small\\b", QRegularExpression::CaseInsensitiveOption),
+        "font-size: 10px");
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*small\\b", QRegularExpression::CaseInsensitiveOption),
+        "font-size: 12px");
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*medium\\b", QRegularExpression::CaseInsensitiveOption),
+        "font-size: 14px");
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*large\\b", QRegularExpression::CaseInsensitiveOption),
+        "font-size: 18px");
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*x-large\\b", QRegularExpression::CaseInsensitiveOption),
+        "font-size: 24px");
+    cleaned.replace(QRegularExpression(
+        "font-size\\s*:\\s*xx-large\\b", QRegularExpression::CaseInsensitiveOption),
+        "font-size: 32px");
+    
+    // =========================================================================
+    // 5. Удаление пустых элементов
+    // =========================================================================
+    
+    cleaned.remove(QRegularExpression(
+        "<div[^>]*>\\s*</div>",
+        QRegularExpression::CaseInsensitiveOption));
+    
+    cleaned.remove(QRegularExpression(
+        "<span[^>]*>\\s*</span>",
+        QRegularExpression::CaseInsensitiveOption));
+    
+    cleaned.remove(QRegularExpression(
+        "<p[^>]*>\\s*</p>",
+        QRegularExpression::CaseInsensitiveOption));
+    
+    // =========================================================================
+    // 6. Финальная очистка
+    // =========================================================================
+    
+    // Условные комментарии MSO — простая версия без сложного lookaround
+    // Удаляем открывающие: <!--[if ...> ... <![endif]-->
+    // Для безопасности удалим весь блок между ними отдельным подходом
+    while (cleaned.contains("<!--[if")) {
+        int start = cleaned.indexOf("<!--[if");
+        if (start == -1) break;
+        int end = cleaned.indexOf("<![endif]-->", start);
+        if (end == -1) break;
+        cleaned.remove(start, end - start + 12);  // 12 = длина "<![endif]-->"
+    }
+    
+    // Удаляем множественные <br> (более 3 подряд)
+    cleaned.replace(QRegularExpression("(<br\\s*/?>\\s*){3,}", QRegularExpression::CaseInsensitiveOption), "<br><br>");
+    
+    // Удаляем множественные пробелы
+    cleaned.replace(QRegularExpression(" {3,}"), "  ");
+    
+    return cleaned;
+}
 
 EmailsView::EmailsView(ApiClient* api, QWidget* parent)
     : QWidget(parent)
     , m_api(api)
+    , m_currentPage(1)
+    , m_perPage(50)
 {
     setupUi();
     setupConnections();
@@ -54,6 +276,8 @@ void EmailsView::setupUi() {
     m_table = new QTableView;
     m_table->setModel(m_model);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	m_table->setSortingEnabled(true);
+    m_table->sortByColumn(EmailsModel::ColDate, Qt::DescendingOrder);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setAlternatingRowColors(true);
     m_table->verticalHeader()->setVisible(false);
@@ -70,6 +294,44 @@ void EmailsView::setupUi() {
     m_table->horizontalHeader()->setSectionResizeMode(EmailsModel::ColLinked, QHeaderView::ResizeToContents);
 
     leftLayout->addWidget(m_table, 1);
+
+    // ====== НОВАЯ ПАНЕЛЬ ПАГИНАЦИИ ======
+    auto* paginationBar = new QWidget;
+    auto* pagLayout = new QHBoxLayout(paginationBar);
+    pagLayout->setContentsMargins(5, 2, 5, 2);
+
+    pagLayout->addWidget(new QLabel("Показывать:"));
+
+    m_comboPerPage = new QComboBox;
+    m_comboPerPage->addItem("25", 25);
+    m_comboPerPage->addItem("50", 50);
+    m_comboPerPage->addItem("100", 100);
+    m_comboPerPage->addItem("500", 500);
+    m_comboPerPage->addItem("1000", 1000);
+    m_comboPerPage->addItem("5000", 5000);
+    m_comboPerPage->addItem("Все письма", 15000);
+    m_comboPerPage->setCurrentIndex(1); // по умолчанию 50
+    m_comboPerPage->setMaximumWidth(150);
+    pagLayout->addWidget(m_comboPerPage);
+
+    pagLayout->addSpacing(10);
+
+    m_btnPrev = new QPushButton("← Назад");
+    m_btnPrev->setEnabled(false);
+    m_btnPrev->setMaximumWidth(80);
+    pagLayout->addWidget(m_btnPrev);
+
+    m_lblPageInfo = new QLabel("Страница 1");
+    m_lblPageInfo->setAlignment(Qt::AlignCenter);
+    m_lblPageInfo->setStyleSheet("color: #666;");
+    pagLayout->addWidget(m_lblPageInfo, 1);
+
+    m_btnNext = new QPushButton("Вперёд →");
+    m_btnNext->setEnabled(false);
+    m_btnNext->setMaximumWidth(80);
+    pagLayout->addWidget(m_btnNext);
+
+    leftLayout->addWidget(paginationBar);
 
     // Нижняя панель
     auto* bottomBar = new QHBoxLayout;
@@ -155,12 +417,19 @@ void EmailsView::setupUi() {
     rightLayout->addWidget(summaryGroup);
 
     // Тело письма
-    auto* bodyGroup = new QGroupBox("📄 Текст письма");
-    auto* bodyLayout = new QVBoxLayout(bodyGroup);
-    m_txtBody = new QTextEdit;
-    m_txtBody->setReadOnly(true);
-    bodyLayout->addWidget(m_txtBody);
-    rightLayout->addWidget(bodyGroup, 1);
+	auto* bodyGroup = new QGroupBox("📄 Текст письма");
+	auto* bodyLayout = new QVBoxLayout(bodyGroup);
+	m_txtBody = new EmailTextBrowser;
+	m_txtBody->setStyleSheet(
+		"EmailTextBrowser { "
+		"  background-color: #ffffff; "
+		"  border: 1px solid #ddd; "
+		"  border-radius: 4px; "
+		"  padding: 8px; "
+		"}"
+	);
+	bodyLayout->addWidget(m_txtBody);
+	rightLayout->addWidget(bodyGroup, 1);
 
     // Собираем в scroll area
     rightScroll->setWidget(rightPanel);
@@ -183,8 +452,15 @@ void EmailsView::setupConnections() {
     connect(m_btnRefresh, &QPushButton::clicked, this, &EmailsView::refresh);
     connect(m_btnLink, &QPushButton::clicked, this, &EmailsView::onLinkToTender);
     
+    // Пагинация
+    connect(m_btnPrev, &QPushButton::clicked, this, &EmailsView::onPrevPage);
+    connect(m_btnNext, &QPushButton::clicked, this, &EmailsView::onNextPage);
+    connect(m_comboPerPage, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &EmailsView::onPerPageChanged);
+    
     connect(m_model, &EmailsModel::totalChanged, this, [this](int total) {
         m_lblTotal->setText(QString("Всего: %1").arg(total));
+        updatePaginationUI(total);
     });
     
     connect(m_model, &EmailsModel::errorOccurred, this, [this](const QString& error) {
@@ -193,9 +469,65 @@ void EmailsView::setupConnections() {
 }
 
 void EmailsView::refresh() {
+    m_currentPage = 1;
+    loadCurrentPage();
+}
+
+void EmailsView::loadCurrentPage() {
     QString category = m_categoryFilter->currentData().toString();
     QString search = m_searchEdit->text();
-    m_model->load(1, category, search);
+    m_model->load(m_currentPage, category, search, m_perPage);
+}
+
+void EmailsView::updatePaginationUI(int total) {
+    int totalPages = (total + m_perPage - 1) / m_perPage;
+    if (totalPages == 0) totalPages = 1;
+    
+    m_lblPageInfo->setText(QString("Страница %1 из %2").arg(m_currentPage).arg(totalPages));
+    
+    m_btnPrev->setEnabled(m_currentPage > 1);
+    m_btnNext->setEnabled(m_currentPage < totalPages);
+    
+    // Обновляем текст "Все письма (N)"
+    int lastIndex = m_comboPerPage->count() - 1;
+    m_comboPerPage->setItemText(lastIndex, QString("Все письма (%1)").arg(total));
+}
+
+void EmailsView::onPrevPage() {
+    if (m_currentPage > 1) {
+        m_currentPage--;
+        loadCurrentPage();
+    }
+}
+
+void EmailsView::onNextPage() {
+    m_currentPage++;
+    loadCurrentPage();
+}
+
+void EmailsView::onPerPageChanged() {
+    int newPerPage = m_comboPerPage->currentData().toInt();
+    
+    // Предупреждение для больших объёмов
+    if (newPerPage >= 5000) {
+        auto result = QMessageBox::question(
+            this,
+            "Загрузка большого количества писем",
+            QString("Вы собираетесь загрузить до %1 писем.\n\n"
+                    "Это может занять 10-30 секунд и потребить больше памяти.\n\n"
+                    "Продолжить?").arg(newPerPage),
+            QMessageBox::Yes | QMessageBox::No
+        );
+        
+        if (result != QMessageBox::Yes) {
+            m_comboPerPage->setCurrentIndex(1); // Возврат к 50
+            return;
+        }
+    }
+    
+    m_perPage = newPerPage;
+    m_currentPage = 1;
+    loadCurrentPage();
 }
 
 void EmailsView::onRowClicked(const QModelIndex& index) {
@@ -210,10 +542,11 @@ void EmailsView::onRowClicked(const QModelIndex& index) {
 void EmailsView::onRowDoubleClicked(const QModelIndex& index) {
     if (!index.isValid()) return;
     
-    // TODO: открыть детальный диалог
     const auto& email = m_model->emailAt(index.row());
-    QMessageBox::information(this, "Письмо",
-        QString("ID: %1\nТема: %2\n\n(Детальный просмотр будет добавлен)").arg(email.id).arg(email.subject));
+    
+    // Открываем детальный диалог
+    auto* dialog = new EmailDetailDialog(m_api, email.id, this);
+    dialog->exec();
 }
 
 void EmailsView::updatePreview(const dto::Email& email) {
@@ -232,22 +565,25 @@ void EmailsView::updatePreview(const dto::Email& email) {
 
     // Вложения
     if (email.attachments_info.isEmpty()) {
-        m_lblAttachments->setText("нет");
-    } else {
-        QStringList names;
-        for (const auto& att : email.attachments_info) {
-            auto obj = att.toObject();
-            QString name = obj["filename"].toString();
-            int size = obj["size_bytes"].toInt();
-            if (size > 1024 * 1024)
-                names << QString("%1 (%.1f МБ)").arg(name).arg(size / 1024.0 / 1024.0);
-            else if (size > 1024)
-                names << QString("%1 (%.1f КБ)").arg(name).arg(size / 1024.0);
-            else
-                names << name;
-        }
-        m_lblAttachments->setText(names.join("\n"));
-    }
+		m_lblAttachments->setText("нет");
+	} else {
+		QStringList names;
+		for (const auto& att : email.attachments_info) {
+			auto obj = att.toObject();
+			QString name = obj["filename"].toString();
+			int size = obj["size_bytes"].toInt();
+			if (size > 1024 * 1024) {
+				QString sizeStr = QString::number(size / 1024.0 / 1024.0, 'f', 1);
+				names << QString("%1 (%2 МБ)").arg(name, sizeStr);
+			} else if (size > 1024) {
+				QString sizeStr = QString::number(size / 1024.0, 'f', 1);
+				names << QString("%1 (%2 КБ)").arg(name, sizeStr);
+			} else {
+				names << QString("%1 (%2 байт)").arg(name).arg(size);
+			}
+		}
+		m_lblAttachments->setText(names.join("\n"));
+	}
 
     // Тендерные данные — красивое отображение
     if (!email.tender_details.isEmpty()) {
@@ -285,15 +621,25 @@ void EmailsView::updatePreview(const dto::Email& email) {
     }
 
     m_txtSummary->setPlainText(email.summary);
-    m_txtBody->setPlainText(email.body_text);
+    // Отображение тела письма: HTML с форматированием или Markdown
+	if (!email.body_html.isEmpty()) {
+		QString cleanedHtml = cleanEmailHtml(email.body_html);
+		m_txtBody->setEmailHtml(cleanedHtml);
+	} else if (!email.body_text.isEmpty()) {
+		m_txtBody->setEmailHtml(convertMarkdownToHtml(email.body_text));
+	} else {
+		m_txtBody->setPlainText("(пустое письмо)");
+	}
 }
 
 void EmailsView::onSearch() {
-    refresh();
+    m_currentPage = 1;
+    loadCurrentPage();
 }
 
 void EmailsView::onCategoryFilterChanged() {
-    refresh();
+    m_currentPage = 1;
+    loadCurrentPage();
 }
 
 void EmailsView::onLinkToTender() {

@@ -122,12 +122,30 @@ void LinkEmailDialog::onTenderSelected(int index) {
 }
 
 void LinkEmailDialog::onCreateNewTender() {
-    // Предзаполняем данные из письма
+    // Правильный порядок: (api, parent, QJsonObject)
     TenderEditDialog dialog(m_api, this, m_email.tender_details);
     
     if (dialog.exec() == QDialog::Accepted) {
-        // Перезагружаем список тендеров
-        loadTenders();
+        int tenderId = dialog.getCreatedTenderId();
+        QStringList files = dialog.getAttachedFiles();
+        
+        if (tenderId > 0 && !files.isEmpty()) {
+            m_api->uploadDocuments(
+                tenderId,
+                files,
+                [this](const QJsonObject& result) {
+                    int count = result["uploaded_count"].toInt();
+                    QMessageBox::information(this, "Успех",
+                        QString("Тендер создан и загружено %1 документ(ов)").arg(count));
+                },
+                [this](const QString& error) {
+                    QMessageBox::warning(this, "Предупреждение",
+                        "Тендер создан, но файлы не загружены:\n" + error);
+                }
+            );
+        }
+        
+        accept();
     }
 }
 

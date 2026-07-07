@@ -39,7 +39,14 @@ struct Tender {
         t.purchase_name = obj["purchase_name"].toString();
         t.customer_name = obj["customer_name"].toString();
         t.etp_url = obj["etp_url"].toString();
-        t.nmck = obj["nmck"].toDouble();
+
+        QJsonValue nmckValue = obj["nmck"];
+        if (nmckValue.isString()) {
+            t.nmck = nmckValue.toString().toDouble();
+        } else {
+            t.nmck = nmckValue.toDouble();
+        }
+
         t.currency = obj["currency"].toString("RUB");
         t.status = obj["status"].toString("NEW");
         t.result = obj["result"].toString();
@@ -90,6 +97,12 @@ struct TendersList {
     }
 };
 
+struct EmailTenderLinkInfo {
+    int tender_id = 0;
+    QString link_type;
+    QString tender_name;
+};
+
 // ============ Email ============
 struct Email {
     int id = 0;
@@ -100,11 +113,12 @@ struct Email {
     QString category;
     QString summary;
     QString body_text;
+    QString body_html;
     QDateTime email_date;
     QDateTime received_at;
     QJsonArray attachments_info;
     QJsonObject tender_details;
-    QList<int> linked_tenders;
+    QList<EmailTenderLinkInfo> linked_tenders;  // ⭐ Только один тип
     
     static Email fromJson(const QJsonObject& obj) {
         Email e;
@@ -116,14 +130,24 @@ struct Email {
         e.category = obj["category"].toString();
         e.summary = obj["summary"].toString();
         e.body_text = obj["body_text"].toString();
+        e.body_html = obj["body_html"].toString();
         e.attachments_info = obj["attachments_info"].toArray();
         e.tender_details = obj["tender_details"].toObject();
         
         if (obj.contains("email_date") && !obj["email_date"].isNull())
             e.email_date = QDateTime::fromString(obj["email_date"].toString(), Qt::ISODate);
         
-        for (const auto& t : obj["linked_tenders"].toArray()) {
-            e.linked_tenders.append(t.toInt());
+        // ⭐ Парсим привязки к тендерам
+        if (obj.contains("linked_tenders") && obj["linked_tenders"].isArray()) {
+            QJsonArray linksArray = obj["linked_tenders"].toArray();
+            for (const QJsonValue& linkVal : linksArray) {
+                QJsonObject linkObj = linkVal.toObject();
+                dto::EmailTenderLinkInfo link;
+                link.tender_id = linkObj["tender_id"].toInt();
+                link.link_type = linkObj["link_type"].toString();
+                link.tender_name = linkObj["tender_name"].toString();
+                e.linked_tenders.append(link);
+            }
         }
         
         return e;
@@ -134,7 +158,7 @@ struct EmailsList {
     QList<Email> items;
     int total = 0;
     int page = 1;
-    int per_page = 20;
+    int per_page = 50;
     
     static EmailsList fromJson(const QJsonObject& obj) {
         EmailsList list;
